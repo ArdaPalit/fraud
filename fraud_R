@@ -1,0 +1,118 @@
+getwd()
+setwd("/Users/ardapalit/Desktop")
+
+data <- read.csv("/Users/ardapalit/Desktop/dataset.csv", nrows = 3000000)
+
+
+library(dplyr)
+library(tidyverse)
+library(sqldf)
+
+data <- as.data.frame(data)
+firstlook <- head(data)
+firstlook
+
+
+#İlk 10 satır
+sqldf("SELECT * FROM data LIMIT 10")
+
+# Transaction tiplerini say
+sqldf("SELECT type , COUNT(*) AS count FROM data GROUP BY type")
+
+# Dolandırıcılık oranı
+sqldf("SELECT COUNT(*) AS fraud_count, 
+              (COUNT(*)*100.0 / (SELECT COUNT(*) FROM data)) AS fraud_percentage
+       FROM data WHERE isFraud = 1")
+
+
+# Tip bazında toplam ve ortalama miktar
+sqldf("SELECT type, SUM(amount) AS total_amount, AVG(amount) AS avg_amount
+       FROM data
+       GROUP BY type")
+
+# En yüksek ve en düşük işlem miktarı
+sqldf("SELECT MAX(amount) AS max_amount, MIN(amount) AS min_amount FROM data")
+
+
+library(ggplot2)
+ggplot(data[1:300000,], aes(x=type, y=amount)) + 
+  geom_boxplot() + 
+  scale_y_log10() +  # outlier görmek için
+  theme_minimal() + 
+  labs(title="Transaction Amount Distribution by Type", y="Amount (log scale)")
+  
+
+# En büyük 10 işlem
+sqldf("SELECT * FROM data ORDER BY amount DESC LIMIT 10")
+
+# En küçük 10 işlem
+sqldf("SELECT * FROM data ORDER BY amount ASC LIMIT 10")
+
+
+ # Transaction tipleri arasında 1000’den fazla olanlar
+sqldf("SELECT type, COUNT(*) AS count
+       FROM data
+       GROUP BY type
+       HAVING COUNT(*) > 100000")
+
+
+# işlemlerin büyüklüğü
+sqldf("SELECT amount,
+             CASE 
+               WHEN amount > 10000 THEN 'High'
+               WHEN amount > 1000 THEN 'Medium'
+               ELSE 'Low'
+             END AS amount_level
+       FROM data
+       LIMIT 10")
+
+
+#fraud işaretlenmiş 10 tane işlem göster
+sqldf("SELECT * FROM data WHERE isFlaggedFraud = '1' LIMIT 10")
+sqldf("SELECT *, COUNT(*) AS flagged_count FROM data WHERE isFlaggedFraud = '1' LIMIT 10")
+sqldf("SELECT type, COUNT(*) AS count FROM data GROUP BY type")
+
+#ML
+
+df <- data[1:3000000, ] %>% 
+  select(step, type, amount, oldbalanceOrg, newbalanceOrig,
+         oldbalanceDest, newbalanceDest, isFraud)
+
+df$type <- as.factor(df$type)
+df$isFraud <- as.factor(df$isFraud)
+df$day <- floor(df$step / 24) + 1
+df$hour <- df$step %% 24
+set.seed(123)
+trainIndex <- createDataPartition(df$isFraud, p = 0.7, list = FALSE)
+train <- df[trainIndex, ]
+test  <- df[-trainIndex, ]
+
+model_rf <- randomForest(isFraud ~ type + amount + oldbalanceOrg + newbalanceOrig +
+                           oldbalanceDest + newbalanceDest + day + hour,
+                         data = train, ntree = 100,
+                         sampsize = c("0" = 1800, "1" = 1800))
+
+pred_prob <- predict(model_rf, test, type="prob")[, "1"]
+threshold <- 0.9
+pred_class_new <- factor(ifelse(pred_prob > threshold, "1", "0"))
+confusionMatrix(pred_class_new, test$isFraud, positive="1")
+
+
+#True = gerçek durum
+#Positive = isFraud = "1"
+
+#Fraud’ların ne kadarını yakaladık? 
+#Sensitivity = TP / (TP + FN)
+
+#Fraud olmayan işlemlerin ne kadarını doğru bildik? 
+#Specificit = TN / (TN + FP)
+
+#Fraud dediklerimiz gerçekten fraud çıkma oranı? 
+#Precision (PPV) =  TP / (TP + FP)    
+
+#ortalama başarı.
+#Balanced Accuracy = (Sensitivity + Specificity) / 2 
+
+
+
+
